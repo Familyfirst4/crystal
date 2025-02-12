@@ -276,6 +276,8 @@ describe "Lexer" do
   it_lexes "&+@foo", :OP_AMP_PLUS
   it_lexes "&-@foo", :OP_AMP_MINUS
   it_lexes_const "Foo"
+  it_lexes_const "ÁrvíztűrőTükörfúrógép"
+  it_lexes_const "ǅǈǋǲᾈᾉᾊ"
   it_lexes_instance_var "@foo"
   it_lexes_class_var "@@foo"
   it_lexes_globals ["$foo", "$FOO", "$_foo", "$foo123"]
@@ -362,6 +364,9 @@ describe "Lexer" do
   assert_syntax_error "0o200_i8", "0o200 doesn't fit in an Int8"
   assert_syntax_error "0b10000000_i8", "0b10000000 doesn't fit in an Int8"
 
+  assert_syntax_error "0b11_f32", "binary float literal is not supported"
+  assert_syntax_error "0o73_f64", "octal float literal is not supported"
+
   # 2**31 - 1
   it_lexes_i32 [["0x7fffffff", "2147483647"], ["0o17777777777", "2147483647"], ["0b1111111111111111111111111111111", "2147483647"]]
   it_lexes_i32 [["0x7fffffff_i32", "2147483647"], ["0o17777777777_i32", "2147483647"], ["0b1111111111111111111111111111111_i32", "2147483647"]]
@@ -428,8 +433,13 @@ describe "Lexer" do
   assert_syntax_error ".42", ".1 style number literal is not supported, put 0 before dot"
   assert_syntax_error "-.42", ".1 style number literal is not supported, put 0 before dot"
 
-  assert_syntax_error "2e", "unexpected token: \"e\""
-  assert_syntax_error "2ef32", "unexpected token: \"ef32\""
+  assert_syntax_error "2e", "invalid decimal number exponent"
+  assert_syntax_error "2e+", "invalid decimal number exponent"
+  assert_syntax_error "2ef32", "invalid decimal number exponent"
+  assert_syntax_error "2e+@foo", "invalid decimal number exponent"
+  assert_syntax_error "2e+e", "invalid decimal number exponent"
+  assert_syntax_error "2e+f32", "invalid decimal number exponent"
+  assert_syntax_error "2e+-2", "invalid decimal number exponent"
   assert_syntax_error "2e+_2", "unexpected '_' in number"
 
   # Test for #11671
@@ -649,6 +659,15 @@ describe "Lexer" do
   assert_syntax_error "'\\u{DFFF}'", "invalid unicode codepoint (surrogate half)"
   assert_syntax_error ":+1", "unexpected token"
 
+  it "invalid byte sequence" do
+    expect_raises(InvalidByteSequenceError, "Unexpected byte 0xff at position 0, malformed UTF-8") do
+      parse "\xFF"
+    end
+    expect_raises(InvalidByteSequenceError, "Unexpected byte 0xff at position 1, malformed UTF-8") do
+      parse " \xFF"
+    end
+  end
+
   assert_syntax_error "'\\1'", "invalid char escape sequence"
 
   it_lexes_string %("\\1"), String.new(Bytes[1])
@@ -683,5 +702,14 @@ describe "Lexer" do
     token = lexer.next_token
     token.type.should eq(t :DELIMITER_START)
     token.delimiter_state.kind.should eq(Token::DelimiterKind::REGEX)
+  end
+
+  it "lexes heredoc start" do
+    lexer = Lexer.new("<<-EOS\n")
+    lexer.wants_raw = true
+    token = lexer.next_token
+    token.type.should eq(t :DELIMITER_START)
+    token.delimiter_state.kind.should eq(Token::DelimiterKind::HEREDOC)
+    token.raw.should eq "<<-EOS"
   end
 end

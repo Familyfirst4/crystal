@@ -53,7 +53,9 @@ module Crystal
         @line = macro_location.line_number + loc.line_number
         @column = loc.column_number
       else
-        raise "not implemented"
+        @line = loc.line_number
+        @column = loc.column_number
+        @filename = "<unknown>"
       end
     end
 
@@ -109,9 +111,12 @@ module Crystal
     def visit(node : Call)
       return contains_target(node) unless node.location && @target_location.between?(node.name_location, node.name_end_location)
 
-      node.target_defs.each do |target_def|
-        @locations << target_def.location.not_nil!
+      if target_defs = node.target_defs
+        target_defs.each do |target_def|
+          @locations << (target_def.location || Location.new(nil, 0, 0))
+        end
       end
+      false
     end
 
     def visit(node : Path)
@@ -121,6 +126,7 @@ module Crystal
       target.try &.locations.try &.each do |loc|
         @locations << loc
       end
+      false
     end
 
     def visit(node)

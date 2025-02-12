@@ -50,7 +50,7 @@ end
 # ```
 #
 # To parse and get an `Array`, use the block-less overload.
-def Array.from_json(string_or_io) : Nil
+def Array.from_json(string_or_io, &) : Nil
   parser = JSON::PullParser.new(string_or_io)
   new(parser) do |element|
     yield element
@@ -58,7 +58,7 @@ def Array.from_json(string_or_io) : Nil
   nil
 end
 
-def Deque.from_json(string_or_io) : Nil
+def Deque.from_json(string_or_io, &) : Nil
   parser = JSON::PullParser.new(string_or_io)
   new(parser) do |element|
     yield element
@@ -125,19 +125,22 @@ def Bool.new(pull : JSON::PullParser)
 end
 
 {% for type, method in {
-                         "Int8"   => "i8",
-                         "Int16"  => "i16",
-                         "Int32"  => "i32",
-                         "Int64"  => "i64",
-                         "UInt8"  => "u8",
-                         "UInt16" => "u16",
-                         "UInt32" => "u32",
-                         "UInt64" => "u64",
+                         "Int8"    => "i8",
+                         "Int16"   => "i16",
+                         "Int32"   => "i32",
+                         "Int64"   => "i64",
+                         "Int128"  => "i128",
+                         "UInt8"   => "u8",
+                         "UInt16"  => "u16",
+                         "UInt32"  => "u32",
+                         "UInt64"  => "u64",
+                         "UInt128" => "u128",
                        } %}
   def {{type.id}}.new(pull : JSON::PullParser)
+    # TODO: use `PullParser#read?` instead
     location = pull.location
     value =
-      {% if type == "UInt64" %}
+      {% if type == "UInt64" || type == "UInt128" || type == "Int128" %}
         pull.read_raw
       {% else %}
         pull.read_int
@@ -204,7 +207,7 @@ def Array.new(pull : JSON::PullParser)
   ary
 end
 
-def Array.new(pull : JSON::PullParser)
+def Array.new(pull : JSON::PullParser, &)
   pull.read_array do
     yield T.new(pull)
   end
@@ -218,7 +221,7 @@ def Deque.new(pull : JSON::PullParser)
   ary
 end
 
-def Deque.new(pull : JSON::PullParser)
+def Deque.new(pull : JSON::PullParser, &)
   pull.read_array do
     yield T.new(pull)
   end
@@ -316,11 +319,13 @@ def Enum.new(pull : JSON::PullParser)
   {% if @type.annotation(Flags) %}
     value = {{ @type }}::None
     pull.read_array do
-      value |= parse?(pull.read_string) || pull.raise "Unknown enum #{self} value: #{pull.string_value.inspect}"
+      string = pull.read_string
+      value |= parse?(string) || pull.raise "Unknown enum #{self} value: #{string.inspect}"
     end
     value
   {% else %}
-    parse?(pull.read_string) || pull.raise "Unknown enum #{self} value: #{pull.string_value.inspect}"
+    string = pull.read_string
+    parse?(string) || pull.raise "Unknown enum #{self} value: #{string.inspect}"
   {% end %}
 end
 
@@ -397,7 +402,7 @@ def Union.new(pull : JSON::PullParser)
       return pull.read_string
     {% end %}
     when .int?
-    {% type_order = [Int64, UInt64, Int32, UInt32, Int16, UInt16, Int8, UInt8, Float64, Float32] %}
+    {% type_order = [Int128, UInt128, Int64, UInt64, Int32, UInt32, Int16, UInt16, Int8, UInt8, Float64, Float32] %}
     {% for type in type_order.select { |t| T.includes? t } %}
       value = pull.read?({{type}})
       return value unless value.nil?
@@ -431,6 +436,28 @@ def Union.new(pull : JSON::PullParser)
         end
       {% end %}
       raise JSON::ParseException.new("Couldn't parse #{self} from #{string}", *location)
+    {% end %}
+  {% end %}
+end
+
+def Union.from_json_object_key?(key : String)
+  {% begin %}
+    # String must come last because any key can be parsed into a String.
+    # So, we give a chance first to other types in the union to be parsed.
+    {% string_type = T.find { |type| type == ::String } %}
+
+    {% for type in T %}
+      {% unless type == string_type %}
+        if result = {{ type }}.from_json_object_key?(key)
+          return result
+        end
+      {% end %}
+    {% end %}
+
+    {% if string_type %}
+      if result = {{ string_type }}.from_json_object_key?(key)
+        return result
+      end
     {% end %}
   {% end %}
 end

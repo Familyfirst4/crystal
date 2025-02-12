@@ -44,7 +44,7 @@ class LLVM::ABI::X86_64 < LLVM::ABI
 
   # returns the LLVM type (with attributes) and the number of integer and SSE
   # registers needed to pass this value directly (ie. not using the stack)
-  def x86_64_type(type, ind_attr, context) : Tuple(ArgType, Int32, Int32)
+  def x86_64_type(type, ind_attr, context, &) : Tuple(ArgType, Int32, Int32)
     if int_register?(type)
       attr = type == context.int1 ? Attribute::ZExt : nil
       {ArgType.direct(type, attr: attr), 1, 0}
@@ -100,7 +100,7 @@ class LLVM::ABI::X86_64 < LLVM::ABI
   def classify(type)
     words = (size(type) + 7) // 8
     reg_classes = Array.new(words, RegClass::NoClass)
-    if words > 4
+    if words > 4 || has_misaligned_fields?(type)
       all_mem(reg_classes)
     else
       classify(type, reg_classes, 0, 0)
@@ -273,6 +273,16 @@ class LLVM::ABI::X86_64 < LLVM::ABI
 
   def size(type : Type) : Int32
     size(type, 8)
+  end
+
+  def has_misaligned_fields?(type : Type) : Bool
+    return false unless type.packed_struct?
+    offset = 0
+    type.struct_element_types.each do |elem|
+      return true unless offset.divisible_by?(align(elem))
+      offset += size(elem)
+    end
+    false
   end
 
   enum RegClass
